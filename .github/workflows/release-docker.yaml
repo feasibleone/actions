@@ -204,6 +204,7 @@ jobs:
     needs:
       - release
       - setup-node
+    if: needs.release.outputs.released == 'true' && needs.release.outputs.npm != '[]'
     strategy:
       matrix:
         include: ${{ fromJson(needs.release.outputs.npm) }}
