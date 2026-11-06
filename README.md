@@ -14,7 +14,7 @@ of this repository in the `uses` field of your workflow job definition, like so:
 ```yaml
 jobs:
   example-job:
-    uses: infitx-org/actions/.github/workflows/<name>.yaml@main
+    uses: feasibleone/actions/.github/workflows/<name>.yaml@main
 ```
 
 As the main branch may change over time, it's recommended to pin to a specific
@@ -24,7 +24,7 @@ or commit SHA instead of the `main` branch, for example:
 ```yaml
 jobs:
   example-job:
-    uses: infitx-org/actions/.github/workflows/<name>.yaml@v1.0.0
+    uses: feasibleone/actions/.github/workflows/<name>.yaml@v1.0.0
 ```
 
 ## Rush monorepo CI workflow
@@ -39,7 +39,7 @@ jobs:
     permissions:
       contents: write     # commit-metrics pushes the stacked metrics branch
       pull-requests: write # ... and opens the pull request that carries it
-    uses: infitx-org/actions/.github/workflows/rush.yaml@main
+    uses: feasibleone/actions/.github/workflows/rush.yaml@main
     with:
       ci-test-jobs: 2
     secrets:
@@ -141,9 +141,28 @@ The failures bundle additionally answers on a stable alias:
 - `<base>/failures/<workflow>/latest/failures.json`
 
 Aliases are maintained declaratively through `deploy-report`'s `aliases` input: a
-tool that reported has its alias re-mirrored to the run, and a tool that did not
+tool that reported has its alias pointed at the run — a redirect page plus the run's
+small JSON, never a copy of its traces and rendered page — and a tool that did not
 report — `failures` on a green run, which produces no bundle — has its alias dropped
 in that same commit, so a URL handed to an agent never points at a stale report.
+
+### Retention
+
+Three windows, because the three kinds of file age differently:
+
+| Input          | Default | Applies to                                                       |
+| -------------- | ------: | ---------------------------------------------------------------- |
+| `keep-reports` |      15 | run directories, per tool/workflow (comparable across runs)      |
+| `keep-heavy`   |       2 | trace archives and the rendered page, within the retained runs   |
+
+`keep-reports` takes one number or a JSON object, so a tool may keep fewer runs than
+the rest: the coverage HTML is about 20 MB of a run and fifteen of them is most of
+the site, and `rush.yaml` keeps two of it. Within the retained runs, `keep-heavy`
+strips the trace archives (`traces/`, 5-7 MB each) and the rendered page (1-11 MB,
+report data and attachments included) from every run older than the newest two, and
+leaves a stub page that links the JSON beside it. Those are the files nobody re-opens
+two runs later; the JSON is what `blong-dev ci history` compares, so a stripped run
+still answers for itself.
 
 ### Shared assets
 
@@ -188,7 +207,7 @@ permissions:
 
 jobs:
   node:
-    uses: infitx-org/actions/.github/workflows/node.yaml@main
+    uses: feasibleone/actions/.github/workflows/node.yaml@main
     with:
       node-version: '22.x'
 ```
@@ -306,7 +325,7 @@ jobs:
           - dockerfile: cbs-mock/Dockerfile
             image: cbs-mock-template
             context: ./cbs-mock
-    uses: infitx-org/actions/.github/workflows/docker.yaml@main
+    uses: feasibleone/actions/.github/workflows/docker.yaml@main
     with:
       dockerfile: ${{ matrix.dockerfile }}
       image: ${{ matrix.image }}
@@ -325,7 +344,7 @@ To push to Docker Hub or another registry, pass the `registry`, `owner` and
 ```yaml
 jobs:
   build:
-    uses: infitx-org/actions/.github/workflows/docker.yaml@main
+    uses: feasibleone/actions/.github/workflows/docker.yaml@main
     with:
       registry: docker.io
       owner: example-owner
@@ -341,7 +360,7 @@ set the `downstream` and `TRIGGER_DOWNSTREAM` secret like this:
 ```yaml
 jobs:
   build:
-    uses: infitx-org/actions/.github/workflows/docker.yaml@main
+    uses: feasibleone/actions/.github/workflows/docker.yaml@main
     with:
       downstream: https://api.github.com/repos/<owner>/<repo>/actions/workflows/<workflow_name>.yaml/dispatches
     secrets:
@@ -378,7 +397,7 @@ on:
 
 jobs:
   release:
-    uses: infitx-org/actions/.github/workflows/release.yaml@main
+    uses: feasibleone/actions/.github/workflows/release.yaml@main
     secrets:
       token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
 ```

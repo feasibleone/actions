@@ -512,7 +512,7 @@ jobs:
         # checks of the commit that was actually tested. Pushed with the workflow
         # token, whose events start no run. The caller's job therefore needs
         # contents:write and pull-requests:write.
-        uses: infitx-org/actions/.github/actions/commit-metrics@main
+        uses: feasibleone/actions/.github/actions/commit-metrics@main
         with:
           metrics-file: .github/metrics.json
           history-file: .github/history.jsonl
@@ -635,7 +635,7 @@ jobs:
         # report cloned, committed and force-pushed the branch once per report, and
         # every push to it cancels the Pages build the previous push started — the
         # reports all land in a single commit here instead.
-        uses: infitx-org/actions/.github/actions/deploy-report@main
+        uses: feasibleone/actions/.github/actions/deploy-report@main
         with:
           report-token: ${{ secrets.REPORT_TOKEN }}
           ext-repo: ${{ inputs.reports-repository }}
@@ -644,7 +644,14 @@ jobs:
           reports: ${{ needs.tests.outputs.reports }}
           # The bundle every report references, copied to the site root once.
           assets: ${{ needs.tests.outputs.assets }}
-          keep-reports: '15'
+          # Fifteen runs of summaries is what `blong-dev ci history` compares, and a run
+          # directory is a few kilobytes of JSON. The coverage HTML is twenty megabytes
+          # of a run — 310 MB of the site across fifteen — and nobody reads the coverage
+          # of a run two weeks old, so it keeps two. `keep-heavy` is the same argument
+          # for the trace archives (~6 MB each) and the rendered pages (1-11 MB each,
+          # attachments included): an older run keeps its JSON and a stub page.
+          keep-reports: '{"default": 15, "coverage": 2}'
+          keep-heavy: '2'
           # The failures bundle also answers on a stable URL, so an agent can be
           # pointed at `<tool>/<workflow>/latest/failures.json`. A green run
           # publishes no bundle, and the action drops the alias in the same commit.

@@ -2,15 +2,17 @@ name: Deploy reports to GitHub Pages
 description: >-
     Publishes a run's report directories to the `<reports-repository>` gh-pages
     branch under `docs/<tool>/<workflow>/<run-number>`, regenerates the per-level
-    index.html files, prunes old numeric run dirs beyond keep-reports, and
-    force-pushes. The whole run goes out in **one commit and one push**: a report
+    index.html files, prunes old numeric run dirs beyond keep-reports, strips the
+    heavy artefacts (trace archives, rendered page) of the runs beyond keep-heavy,
+    and force-pushes. The whole run goes out in **one commit and one push**: a report
     per invocation would clone, commit and push once per report, and every push to
     the same branch cancels the Pages build the previous push started.
 
     Aliases are declarative: a tool in `aliases` that reported this run has its
-    alias mirrored to the run, and a tool named there that did *not* report has its
-    alias dropped in the same commit, so a URL handed to an agent never keeps
-    answering with a stale report.
+    alias pointed at the run — a redirect plus the run's small JSON, never a copy of
+    its traces and page — and a tool named there that did *not* report has its alias
+    dropped in the same commit, so a URL handed to an agent never keeps answering
+    with a stale report.
 
     Emits the published URLs, tool by tool, as the `urls` output.
 inputs:
@@ -58,9 +60,24 @@ inputs:
         required: false
         default: '[]'
     keep-reports:
-        description: Number of most recent numeric run dirs to keep per tool/workflow.
+        description: >-
+            Number of most recent numeric run dirs to keep per tool/workflow, either as
+            one number or as a JSON object of `{"default": n, "<tool>": n}`. A run
+            directory costs a few kilobytes of JSON; the coverage HTML of one run costs
+            twenty megabytes, which is why a tool may keep fewer than the rest.
         required: false
         default: '15'
+    keep-heavy:
+        description: >-
+            Number of most recent run dirs per tool/workflow that keep their **heavy**
+            artefacts: the trace archives (`traces/`) and the rendered report page
+            (`index.html`). An older retained run keeps its JSON, its markdown and a stub
+            page that links to them, because those are what a tool reads and what a run
+            still answers for itself — the 5-11 MB page and the 5-7 MB archives are
+            only ever opened while the newest run or two are being investigated. `0`
+            strips every retained run.
+        required: false
+        default: '2'
 outputs:
     deployed:
         description: >-
@@ -86,3 +103,4 @@ runs:
               INPUT_ALIASES: ${{ inputs.aliases }}
               INPUT_ASSETS: ${{ inputs.assets }}
               INPUT_KEEP_REPORTS: ${{ inputs.keep-reports }}
+              INPUT_KEEP_HEAVY: ${{ inputs.keep-heavy }}

@@ -18,14 +18,23 @@
 //     content-addressed Allure application bundle).
 //
 // Also: clone (or init) the gh-pages branch, copy docs/<tool>/<workflow>/<run>,
-// touch .nojekyll, prune numeric run dirs beyond keep-reports, regenerate
-// index.html at docs, docs/<tool> and docs/<tool>/<workflow>, resolve the pages
-// base URL (custom-domain aware), and commit + force push.
+// touch .nojekyll, prune numeric run dirs beyond keep-reports, strip the heavy
+// artefacts (trace archives, rendered page) of the runs beyond keep-heavy, point
+// the aliases at the run instead of copying it, regenerate index.html at docs,
+// docs/<tool> and docs/<tool>/<workflow>, resolve the pages base URL
+// (custom-domain aware), and commit + force push.
 import {existsSync} from 'node:fs';
-import {copyFileSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync} from 'node:fs';
+import {mkdirSync, readdirSync, rmSync, writeFileSync} from 'node:fs';
 import {execFileSync} from 'node:child_process';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
+import {
+    copyRecursive,
+    keepFor,
+    pruneHeavy,
+    pruneRuns,
+    writeAlias,
+} from './lib.js';
 
 const workspace = process.env.GITHUB_WORKSPACE || process.cwd();
 const currentRepo = process.env.GITHUB_REPOSITORY || '';
@@ -34,7 +43,11 @@ const currentRepo = process.env.GITHUB_REPOSITORY || '';
 const extRepo = (process.env.INPUT_EXT_REPO || '').trim() || currentRepo;
 const workflow = (process.env.INPUT_WORKFLOW || '').trim();
 const runNum = (process.env.INPUT_RUN_NUM || '').trim();
-const keep = Math.max(1, Number(process.env.INPUT_KEEP_REPORTS || '15') || 15);
+const keepReports = parseJson('keep-reports', process.env.INPUT_KEEP_REPORTS, 15);
+// Blank means the documented default rather than "strip everything": an input the
+// caller left empty is not an instruction to delete the heavy artefacts of every run.
+const keepHeavyInput = (process.env.INPUT_KEEP_HEAVY ?? '').trim();
+const keepHeavy = keepHeavyInput === '' ? 2 : Math.max(0, Number(keepHeavyInput) || 0);
 const reportToken = (process.env.INPUT_REPORT_TOKEN || '').trim();
 
 const token = extRepo === currentRepo ? (process.env.GITHUB_TOKEN || '').trim() : reportToken;
@@ -69,6 +82,13 @@ if (!Array.isArray(reports)) fail('reports must be a JSON array of {tool, src}')
 if (typeof aliases !== 'object' || aliases === null || Array.isArray(aliases))
     fail('aliases must be a JSON object of {tool: alias}');
 if (!Array.isArray(sharedAssets)) fail('assets must be a JSON array of {src, dest}');
+// One number for every tool, or `{"default": n, "<tool>": n}`: the coverage HTML
+// is twenty megabytes of a run, and fifteen of them is most of the site.
+if (
+    typeof keepReports !== 'number' &&
+    (typeof keepReports !== 'object' || keepReports === null || Array.isArray(keepReports))
+)
+    fail('keep-reports must be a number or a JSON object of {default, <tool>}');
 
 const problems = [];
 if (!workflow) problems.push('workflow');
@@ -155,9 +175,20 @@ for (const {tool, src} of reports.map((entry) => ({tool: String(entry.tool).trim
         console.log(`::warning::report source not found: ${src}`);
     }
     writeFileSync(join(work, 'docs', '.nojekyll'), '');
-    prune(join(work, 'docs', tool, wf));
+    const droppedRuns = pruneRuns(join(work, 'docs', tool, wf), keepFor(tool, keepReports));
+    if (droppedRuns.length) console.log(`Pruned ${droppedRuns.length} old run(s) of ${tool}`);
     published.push(tool);
     hide(tool);
+}
+
+// --- Strip the heavy artefacts of the older runs -------------------------------
+// A trace archive and a rendered page are the bytes of the site, and both are only
+// ever opened while the newest run or two are being looked at. Older runs keep their
+// JSON — which is what `blong-dev ci history` compares — and a stub page that links
+// to it, so a run directory still answers for itself after losing its report.
+for (const tool of published) {
+    const stripped = pruneHeavy(join(work, 'docs', tool, wf), keepHeavy);
+    if (stripped.length) console.log(`Stripped heavy artefacts of ${stripped.length} old run(s) of ${tool}`);
 }
 
 // --- Stage this run's shared assets --------------------------------------------
@@ -183,14 +214,15 @@ for (const entry of sharedAssets.map((asset) => ({
 
 // --- Maintain the stable aliases -----------------------------------------------
 // After pruning, so an alias can never point at a run that was just removed. A
-// tool that reported this run mirrors it; one that did not has its alias dropped
-// (a green run publishes no failures bundle, and the previous one must stop
-// answering on the stable URL).
+// tool that reported this run points its alias at the run — a redirect plus the
+// run's small JSON, not the recursive copy that put a second copy of every trace
+// and page on the site; a tool that did not report has its alias dropped (a green
+// run publishes no failures bundle, and the previous one must stop answering on
+// the stable URL).
 for (const [tool, alias] of aliasTools) {
     const aliasDir = join(work, 'docs', tool, wf, alias);
     if (published.includes(tool)) {
-        rmSync(aliasDir, {recursive: true, force: true});
-        copyRecursive(join(work, 'docs', tool, wf, runNum), aliasDir);
+        writeAlias(aliasDir, runNum);
     } else if (existsSync(aliasDir)) {
         rmSync(aliasDir, {recursive: true, force: true});
         dropped.push(`${tool}/${alias}`);
@@ -252,24 +284,6 @@ function hasBranch(url, branch) {
         return refs.trim() !== '';
     } catch {
         return false;
-    }
-}
-function prune(root) {
-    if (!existsSync(root)) return;
-    const numericDirs = readdirSync(root, {withFileTypes: true})
-        .filter((d) => d.isDirectory() && /^\d+$/.test(d.name))
-        .map((d) => d.name)
-        .sort((a, b) => Number(a) - Number(b));
-    for (const old of numericDirs.slice(0, Math.max(0, numericDirs.length - keep))) {
-        rmSync(join(root, old), {recursive: true, force: true});
-    }
-}
-function copyRecursive(src, dst) {
-    if (statSync(src).isDirectory()) {
-        mkdirSync(dst, {recursive: true});
-        for (const entry of readdirSync(src)) copyRecursive(join(src, entry), join(dst, entry));
-    } else {
-        copyFileSync(src, dst);
     }
 }
 function genIndex(dir, title, exclude = new Set()) {
